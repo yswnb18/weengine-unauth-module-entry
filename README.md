@@ -1,239 +1,371 @@
-# WeEngine (微擎) — Unauthenticated module entry access & verification-code trigger
+# WeEngine (微擎) — unauthenticated access issues, by vulnerability
 
-**Status:** vendor notified 2026-11-26 · **CVE:** requested (not yet assigned)
-**Published:** 2026-11-26
+**Status:** vendor notified 2026-11-26 · **Published:** 2026-11-26 · **CVE:** requested (not yet assigned)
 **Vendor:** WeEngine (微擎), 宿州市微擎云计算有限公司 — <https://www.we7.cc>
-**Tested against:** official release 2.9.13 (`IMS_RELEASE_DATE = 202610280001`, build 2026-10-28,
-package md5 `d14bcecbfb774d27f41c3c43796e2e05`), plus 1.7.2 and 1.7.7.
+**Tested against:** official 2.9.13 (`IMS_RELEASE_DATE = 202610280001`, build 2026-10-28, package md5
+`d14bcecbfb774d27f41c3c43796e2e05`), plus 1.7.2 and 1.7.7.
 
-This repository contains a **non-destructive detector** for two issues that are still present in the
-current WeEngine release, together with the technical description needed to reproduce the finding in
-a controlled lab. It contains **no weaponised payload, no file upload, no data-modifying request and
-no SMS/e-mail is ever sent**.
+> 中文速览：本仓库把 6 个问题拆成 6 个独立检测脚本。**WE7-5、WE7-6 在当前最新版 2.9.13 上仍然存在**；
+> WE7-1/2/3 是 1.7.x 的问题、2.9.13 已修；WE7-4 是信息类。所有脚本都是**非破坏性**的：只发 GET，
+> 不上传、不写文件、不建/删数据、不发短信邮件。
 
 ---
 
-## 1. Affected versions
+## 0. Index — one vulnerability per script
 
-| Issue | Affected | Verified live | Fixed in |
+| ID | Vulnerability class | Component | Affected versions | Status in 2.9.13 | Script |
+|---|---|---|---|---|---|
+| **WE7-5** | **CWE-862** Missing Authorization (also CWE-306) | `web/source/site/entry.ctrl.php` | **1.7.2 → 2.9.13** | **still vulnerable** | `we7_5_module_entry_bypass.py` |
+| **WE7-6** | **CWE-799** Improper Control of Interaction Frequency (also CWE-770) | `web/source/utility/verifycode.ctrl.php` | **1.7.2 → 2.9.13** | **still vulnerable** | `we7_6_verifycode_trigger.py` |
+| WE7-1 | **CWE-306** → CWE-434 / CWE-94 | `web/source/cloud/dock.ctrl.php` | 1.7.2 – 1.7.7 | fixed | `we7_1_cloud_dock_rce.py` |
+| WE7-2 | **CWE-918** SSRF (full response echo) | `web/source/utility/wxcode.ctrl.php` | 1.7.2 – 1.7.7 | fixed | `we7_2_wxcode_ssrf.py` |
+| WE7-3 | **CWE-434** Unrestricted upload | `web/source/utility/file.ctrl.php` | 1.7.2 – 1.7.7 | fixed | `we7_3_file_upload.py` |
+| WE7-4 | **CWE-200** Information exposure (informational) | `web/source/utility/modules.ctrl.php` | 1.7.2 – 2.9.13 | not fixed | `we7_4_module_enum.py` |
+| — | runner | — | — | — | `run_all.py` |
+
+Each script is standalone (Python 3, standard library only), prints a verdict and uses exit codes
+`0 = not vulnerable / not exposed`, `1 = vulnerable / exposed`, `2 = inconclusive`.
+
+---
+
+## 1. Lab results — the differential that the detectors rely on
+
+| check | 1.7.2 | 1.7.7 | 2.9.13 |
 |---|---|---|---|
-| **WE7-5** unauthenticated invocation of a module backend entry (`site/entry`) | 1.7.2 → **2.9.13** | 1.7.2, 2.9.13 | **not fixed** as of 2.9.13 |
-| **WE7-6** unauthenticated verification-code trigger (`utility/verifycode`) | 1.7.2 → **2.9.13** | 1.7.7, 2.9.13 | **not fixed** as of 2.9.13 |
-| WE7-1 `cloud/dock` unauthenticated settings overwrite → arbitrary file write → RCE | 1.7.2, 1.7.7 | 1.7.2, 1.7.7 | 2.9.13 |
-| WE7-2 `utility/wxcode` unauthenticated SSRF with response echo | 1.7.2, 1.7.7 | 1.7.2, 1.7.7 | 2.9.13 |
-| WE7-3 `utility/file` unauthenticated arbitrary-content upload | 1.7.2, 1.7.7 | 1.7.7 | 2.9.13 |
-| WE7-4 `utility/modules` unauthenticated module enumeration (informational) | 1.7.2 → 2.9.13 | 2.9.13 | not fixed |
+| WE7-1 `dock` download, empty payload | `failed <token>` | `failed <token>` | `cloud service is unavailable.` |
+| WE7-2 `wxcode` self-fetch echo | page echoed | page echoed | empty body |
+| WE7-3 `file` upload endpoint (no file sent) | JSON error | JSON error | `302` login |
+| WE7-4 `modules` list | module JSON | module JSON | module JSON |
+| WE7-5 entry with `direct=1` | `200` page | `302` when a binding row exists, `200` when not | `200` page |
+| WE7-6 `verifycode` with malformed receiver | error text | error text | JSON error |
 
-WE7-1/2/3 are listed for context only — they are fixed in the current release and have been discussed
-publicly before. The two issues this repository focuses on are the ones that are **still live**.
+`run_all.py` output on the two extremes:
+
+```
+target: http://127.0.0.1:8082            # 1.7.2
+WE7-1  CWE-306 -> 434/94  unauth file write -> RCE   VULNERABLE
+WE7-2  CWE-918  SSRF with response echo              VULNERABLE
+WE7-3  CWE-434  unauth upload endpoint               EXPOSED
+WE7-4  CWE-200  module enumeration                   EXPOSED
+WE7-6  CWE-799  unauth code trigger                  REACHABLE WITHOUT A SESSION
+WE7-5  CWE-862  missing authorization (module entry) VULNERABLE
+
+target: http://127.0.0.1:8084            # 2.9.13 (current)
+WE7-1  ... not vulnerable (hardened build: cloud guard reached before the download branch)
+WE7-2  ... not vulnerable (no echo - allow-list in place)
+WE7-3  ... not exposed (redirects to the login page)
+WE7-4  ... EXPOSED
+WE7-6  ... REACHABLE WITHOUT A SESSION
+WE7-5  ... VULNERABLE
+```
 
 ---
 
 ## 2. WE7-5 — unauthenticated invocation of a module backend entry
 
-### 2.1 Where
+**Class:** CWE-862 Missing Authorization (also CWE-306) · **Component:** `web/source/site/entry.ctrl.php`
+**Affected:** 1.7.2 – 2.9.13 (current) · **Script:** `we7_5_module_entry_bypass.py`
 
-`web/source/site/entry.ctrl.php`
+### Principle
+
+The controller decides whether to authenticate from the `direct` field of a `modules_bindings` row.
+When **no row matches**, it fabricates the row from the request — including the authorization flag:
 
 ```php
-// 1) look the entry up in modules_bindings
-$entry = table('modules_bindings')
-    ->where(array('module' => $entry_module_name, 'do' => safe_gpc_string($_GPC['do'])))
-    ->get();
-
-// 2) if there is no such row, build one from the request
+$entry = table('modules_bindings')->where(array('module' => $m, 'do' => $do))->get();
 if (empty($entry)) {
     $entry = array(
         'module' => $entry_module_name,
-        'do'     => safe_gpc_string($_GPC['do']),
-        'state'  => !empty($_GPC['state'])  ? safe_gpc_string($_GPC['state'])  : '',
+        'do'     => $_GPC['do'],
         'direct' => !empty($_GPC['direct']) ? safe_gpc_string($_GPC['direct']) : 0,   // attacker-controlled
     );
 }
-
-// 3) the only authorization gate in the whole flow
-if (!$entry['direct']) {
+if (!$entry['direct']) {              // the only gate in the entire flow
     checklogin();
-    /* ... account / module permission checks ... */
+    /* + account / module permission checks */
 }
-
-// 4) then the method is called by name
 $method = 'doWeb' . ucfirst($entry['do']);
-exit($site->$method());
+exit($site->$method());               // module method called by name
 ```
 
-`modules_bindings` rows are generated from the `<bindings>` section of each module's `manifest.xml`.
-Consequently the reachable surface is **every `doWeb*` method a module implements but does not declare
-as a binding** — typically exports, batch operations, AJAX handlers, cache/token maintenance and
-diagnostic pages — plus every module that declares no bindings at all.
+Consequences:
 
-Version 2.9.13 only wraps the value in `safe_gpc_string()` (an XSS/trim filter). The authorization
-logic is unchanged, so the bypass survives in the current release.
+* `modules_bindings` rows are generated from the module's `manifest.xml <bindings>` section, so the
+  exposed surface is **every `doWeb*` method the module implements but does not declare** (exports,
+  batch operations, cache/token maintenance, diagnostics) and **every module that declares no
+  bindings at all**;
+* an entry that *is* declared stays protected — the binding row wins over the request parameter. Our
+  lab shows both sides: on 1.7.7 `hc_doudou` has 7 binding rows, `do=setting&direct=1` → `302` login;
+  on 1.7.2 the same module has no rows, the same request → `200` admin page;
+* 2.9.13 only wrapped the value in `safe_gpc_string()` (an XSS/trim filter). The authorization logic
+  is unchanged, which is why the bypass is still present today.
 
-### 2.2 Verified behaviour (2.9.13, no cookie, no session)
+### What it means in practice
 
-Bindings were installed exactly as the framework derives them from the module's manifest, so the test
-reflects a normally installed module:
+Verified anonymously on 2.9.13 (no cookie, no session) against three third-party modules:
 
-| request | result |
-|---|---|
-| `do=lists` (declared in manifest → binding row, `direct=0`) | `302` → login (protected) |
-| `do=drawlists` (declared) | `302` → login (protected) |
-| `do=diagnose` (not declared) | **`200`, admin page rendered** |
-| `do=excletop` (not declared, export) | **`200`, export produced** |
-| `do=excledraw` (not declared, export) | **`200`, `Content-Disposition: attachment; filename=<activity>-<date>.csv`** |
+| module | entry | observed |
+|---|---|---|
+| activity / payment module | `do=setting&direct=1` | HTTP 200, module admin page rendered, its save handler wrote a file |
+| form module | `do=list` / `do=typeadd` / `do=typedel` | form list as JSON; form created; form deleted with its field and submission tables cascaded |
+| activity/voting module | `do=excledraw&direct=1` | `Content-Disposition: attachment; …csv` — member nicknames, openid, real name, phone and address exported to an anonymous caller |
 
-The exported CSV of the activity module contains, per member: nickname, openid, real name, phone
-number and shipping address — i.e. personal data of the site's members, returned to an anonymous
-caller. Two further modules were used to confirm that the entry point, not one specific handler, is
-the problem: an activity/payment module wrote a file through its own save handler, and a form module
-created and deleted business records anonymously.
+### Detection
 
-Control: the same requests with `direct=0` return `302` to the login page.
+Differential, GET only:
 
-### 2.3 Impact
+```bash
+python3 we7_5_module_entry_bypass.py -u http://127.0.0.1:8084 -m xiaof_toupiao
+```
 
-Installations that run one or more third-party modules — the normal operating mode of the product —
-expose those modules' undeclared backend methods to anyone who can reach the site: configuration and
-credential writes, business-record creation/deletion, and bulk export of member data. Sites without
-third-party modules are not affected by this issue.
+```
+  xiaof_toupiao?do=diagnose     direct=0 -> 302 | direct=1 -> 200 | VULNERABLE (direct=1 bypassed the login gate)
+  xiaof_toupiao?do=lists        direct=0 -> 302 | direct=1 -> 302 | protected (a binding row exists -> checklogin() is enforced)
+```
 
-### 2.4 Remediation
+### Remediation
 
-Treat "no binding row" as "not authorized" (fail closed) instead of synthesising the authorization
-flag from request input, and require authentication for every module entry that the module did not
-explicitly declare public.
+Fail closed: treat "no binding row" as "not authorized", never build the authorization flag from
+request input, and require authentication for every entry the module did not declare public.
 
 ---
 
-## 3. WE7-6 — unauthenticated verification-code trigger
+## 3. WE7-6 — unauthenticated verification-code trigger (e-mail / SMS)
 
-### 3.1 Where
+**Class:** CWE-799 / CWE-770 · **Component:** `web/source/utility/verifycode.ctrl.php`
+**Affected:** 1.7.2 – 2.9.13 (current) · **Script:** `we7_6_verifycode_trigger.py`
 
-`web/source/utility/verifycode.ctrl.php`, reachable without authentication because it is listed in the
-`direct` array of the utility ACL in `web/common/permission.inc.php`.
+### Principle
+
+`verifycode` sits in the unauthenticated `direct` ACL of `utility`, so no session is required.
+Three further weaknesses turn a covered feature into an open relay:
 
 ```php
 $need_checkcaptcha = true;
 if (isset($_GPC['need_checkcaptcha']) && intval($_GPC['need_checkcaptcha']) > 0) {
-    $need_checkcaptcha = false;          // the client can switch the captcha off
+    $need_checkcaptcha = false;                     // 1. the caller switches the captcha off
 }
-
-$receiver = safe_gpc_string($_GPC['receiver']);   // arbitrary recipient
-...
+$receiver = safe_gpc_string($_GPC['receiver']);     // 2. arbitrary recipient
 $row = $verifycode_table->getByReceiverVerifycode($_W['uniacid'], $receiver, '');
-if ($row['total'] >= 5) iajax(-1, 'too frequent');
-pdo_delete('uni_verifycode', array('createtime <' => TIMESTAMP - 1800));  // counters expire in 30 min
+if ($row['total'] >= 5) iajax(-1, 'too frequent');   // 3. quota keyed on a request parameter
+pdo_delete('uni_verifycode', array('createtime <' => TIMESTAMP - 1800));
 ```
 
-The throttle is keyed on `(uniacid, receiver)`, and `uniacid` is itself a request parameter
-(`$_GPC['uniacid']`), so rotating it yields a fresh quota; the counter rows are purged after
-30 minutes.
-
-Delivery then goes through the site's own transport:
+`$_W['uniacid']` is initialised from `$_GPC['uniacid']`, so rotating it grants a fresh 5-message
+quota; counters are purged after 30 minutes anyway. Delivery then uses the site's own transport:
 
 ```php
-if ('email' == $receiver_type) {
-    $result = ihttp_email($receiver, "...", $content);        // site SMTP
-} else {
-    $result = cloud_sms_send($receiver, '800002', $postdata); // billed to the site owner's cloud balance
+if ('email' == $receiver_type) { $result = ihttp_email($receiver, ...); }     // site SMTP
+else                          { $result = cloud_sms_send($receiver, '800002', ...); }  // billed to the owner
+```
+
+Impact: the site's SMTP becomes a bulk sender for arbitrary recipients (domain/IP blacklisting), and
+on a site registered with the vendor cloud each SMS is billed to the site owner, so the balance can be
+drained; arbitrary phone numbers can be flooded. No account, session or user interaction is required.
+
+### Detection (nothing is ever sent)
+
+```bash
+python3 we7_6_verifycode_trigger.py -u http://127.0.0.1:8084
+```
+
+The script only ever uses a **malformed receiver**, which validation rejects before a code is
+generated — so the probe proves reachability without producing a single message. A "does it really
+send" test is deliberately not implemented: it costs the site owner money.
+
+### Remediation
+
+Remove the endpoint from the unauthenticated ACL (or require a CSRF-protected session), decide the
+captcha server-side only, key throttling on client IP + recipient, cap total sends per IP and window.
+
+---
+
+## 4. WE7-1 — cloud `dock` unauthenticated settings overwrite → arbitrary file write → RCE
+
+**Class:** CWE-306 → CWE-434 / CWE-94 · **Component:** `web/source/cloud/dock.ctrl.php`
+**Affected:** 1.7.2 – 1.7.7 (fixed in 2.9.13) · **Script:** `we7_1_cloud_dock_rce.py`
+
+### Principle
+
+Two actions are chained because the handler trusts state the request can rewrite:
+
+```php
+if ($do == 'callback') {                       // 1. runs BEFORE the cloud guard, then exits
+    $site = json_decode(base64_decode($_GPC['token']), true);
+    setting_save($site, 'site');               //    writes site.key / site.token
+    exit("1");
+}
+if ($do != 'auth') { if (is_error(cloud_prepare())) exit('cloud service is unavailable.'); }
+
+if ($do == 'download') {                       // 2. signs with the key from step 1
+    $string = md5($file) . $ret['path'] . $_W['setting']['site']['token'];
+    if (!empty($_W['setting']['site']['token']) && md5($string) === $ret['sign']) {
+        $path = IA_ROOT . $ret['path'];        //    no path / extension restriction
+        @mkdirs(dirname($path));
+        file_put_contents($path, $file);
+    }
+    exit("failed$post " . $_W['setting']['site']['token']);   //    and echoes the token
 }
 ```
 
-### 3.2 Impact
+`cloud_prepare()` only checks that `site.key` and `site.token` are non-empty — values that step 1 has
+just set. The HMAC therefore protects nothing: the attacker signs his own payload. Writing a `.php`
+file under the web root completes the chain.
 
-* e-mail: the site's SMTP is used to send to arbitrary recipients → sending domain/IP blacklisting,
-  abuse complaints;
-* SMS: each message is debited from the site owner's purchased cloud SMS balance → direct financial
-  loss, and arbitrary numbers can be flooded;
-* neither requires an account, a session or user interaction.
+Verified on 1.7.2 and 1.7.7 with a lab-only payload that returns `uid=0(root)`. Not present in the
+2018 1.0 builds (their download handler already reads the key from the cache), and fixed in 2.9.13
+(`callback` removed, key moved to `authcode(cache_load('cloud:transtoken'),'DECODE')`, writes under
+`/web/` and `/framework/` redirected to `data/patch/upgrade/`).
 
-### 3.3 Verified behaviour
-
-On 2.9.13 an unauthenticated request caused the server to actually attempt delivery (the response
-carried the mailer transport error), confirming the send routine runs rather than being blocked by an
-authorization check. The detector below deliberately uses a **malformed** receiver, which the endpoint
-rejects before any message is generated — nothing is sent.
-
-### 3.4 Remediation
-
-Remove the endpoint from the unauthenticated ACL (or require a CSRF-protected session), decide the
-captcha requirement server-side only, key throttling on client IP + recipient, and cap total sends
-per IP and per window.
-
----
-
-## 4. Detector
-
-`we7_unauth_check.py` — Python 3, standard library only.
+### Detection (non-destructive)
 
 ```bash
-# basic run against an installation where a module named "xiaof_toupiao" is installed
-python3 we7_unauth_check.py -u http://127.0.0.1:8084 -m xiaof_toupiao
-
-# test specific entries
-python3 we7_unauth_check.py -u https://target -m some_module -d diagnose -d lists
-
-# machine-readable
-python3 we7_unauth_check.py -u https://target -m some_module --json
+python3 we7_1_cloud_dock_rce.py -u http://127.0.0.1:8080
 ```
 
-Sample output (2.9.13 lab, bindings installed as the framework would create them):
+The script sends an **empty** payload to the legacy `download` handler. A vulnerable build answers
+`failed <site-token>`; a hardened one answers `cloud service is unavailable.` or plain `failed`.
+Nothing is written and the settings-poisoning `callback` action is never touched. Because the legacy
+reply leaks the site token, the script masks it (length + first 4 characters only).
 
-```
-=== target: http://127.0.0.1:8084 ===
-  [WE7-4] module enumeration exposed: True (HTTP 200)
-  [WE7-5] xiaof_toupiao?do=diagnose     direct=0 -> 302 | direct=1 -> 200 | VULNERABLE (unauthenticated access via direct=1)
-  [WE7-5] xiaof_toupiao?do=excletop     direct=0 -> 302 | direct=1 -> 200 | VULNERABLE (unauthenticated access via direct=1)
-  [WE7-5] xiaof_toupiao?do=excledraw    direct=0 -> 302 | direct=1 -> 200 | VULNERABLE (unauthenticated access via direct=1)
-  [WE7-5] xiaof_toupiao?do=lists        direct=0 -> 302 | direct=1 -> 302 | not reachable (binding row exists -> checklogin() enforced)
-  [WE7-6] endpoint reachable without login: True (HTTP 200) — nothing was sent
-  [WE7-2] response echoed back: False (HTTP 200)
+### Remediation
 
-summary: VULNERABLE
-vulnerable entries: xiaof_toupiao?do=diagnose, xiaof_toupiao?do=excletop, xiaof_toupiao?do=excledraw
-```
-
-### 4.1 What the detector does *not* do
-
-* no POST/PUT/DELETE, no form submission, no file upload;
-* no create/update/delete of any record;
-* no SMS or e-mail delivery (WE7-6 is probed with an invalid recipient, rejected before delivery);
-* no brute force, no payload list, no rate-abuse;
-* exactly one GET per check, one check per module/entry pair you name.
+Authenticate the callback action, never derive a signing key from request-modifiable state, whitelist
+the write path, and stop echoing the token in error responses.
 
 ---
 
-## 5. Disclosure timeline
+## 5. WE7-2 — unauthenticated SSRF with full response echo
+
+**Class:** CWE-918 · **Component:** `web/source/utility/wxcode.ctrl.php` (do=image)
+**Affected:** 1.7.2 – 1.7.7 (fixed in 2.9.13) · **Script:** `we7_2_wxcode_ssrf.py`
+
+### Principle
+
+```php
+$content = ihttp_request($_GPC['attach']);   // unauthenticated, URL fully controlled
+echo $content['content'];                    // entire response body returned
+```
+
+`ihttp_allow_host()` filters destinations only when the site configured
+`setting.cloudip.ip_white_list`; the default is empty, so nothing is filtered. `CURLOPT_FOLLOWLOCATION`
+is enabled, so redirects into private ranges are followed. Because the body is echoed, this is a
+full-read SSRF (internal panels, intranet services, cloud metadata), not a blind one. 2.9.13 now
+requires the URL to start with `http(s)://mmbiz.qpic.cn/` or `http(s)://mmbiz.qlogo.cn/`.
+
+### Detection (non-destructive)
+
+```bash
+python3 we7_2_wxcode_ssrf.py -u http://127.0.0.1:8080
+```
+
+The destination used is **the target itself** — no third-party host is contacted and no internal port
+is scanned. Vulnerable builds echo the fetched HTML back; hardened builds return an empty body.
+
+### Remediation
+
+Strict host allow-list, re-validate after redirects, reject private/link-local ranges.
+
+---
+
+## 6. WE7-3 — unauthenticated upload endpoint with no content validation
+
+**Class:** CWE-434 · **Component:** `web/source/utility/file.ctrl.php` (do=upload)
+**Affected:** 1.7.2 – 1.7.7 (fixed in 2.9.13) · **Script:** `we7_3_file_upload.py`
+
+### Principle
+
+`file` is part of the unauthenticated `direct` ACL in 1.7.x:
+
+```php
+'utility' => array('direct' => array('verifycode', 'code', 'file', ...))
+```
+
+`file_upload()` validates the **extension only**, never the content, and stores results under
+`attachment/images/<uniacid>/…`. PHP extensions are rejected, so this is not direct RCE; the impact is
+stored XSS from the site's own origin, file hosting under the victim's domain, and chain material.
+2.9.13 moved `file` to the authenticated (vice-founder/owner) part of the ACL.
+
+### Detection (nothing is uploaded)
+
+```bash
+python3 we7_3_file_upload.py -u http://127.0.0.1:8080
+```
+
+A GET to the upload action with **no file attached**: a reachable handler answers with its own JSON
+error, a hardened build answers `302` to the login page. The script never posts a file.
+
+### Remediation
+
+Require authentication, validate magic bytes/content, store outside the web root, serve attachments
+with `Content-Disposition` and a restrictive `Content-Type`.
+
+---
+
+## 7. WE7-4 — unauthenticated module enumeration (informational)
+
+**Class:** CWE-200 · **Component:** `web/source/utility/modules.ctrl.php` (do=list)
+**Affected:** 1.7.2 – 2.9.13 · **Script:** `we7_4_module_enum.py`
+
+`modules` is in the unauthenticated `direct` ACL and returns the module table as JSON (identifiers,
+titles, `issystem`, `enabled`). No direct impact, but it is the reconnaissance step for WE7-5: the
+module name plus an undeclared entry is all an attacker needs.
+
+```bash
+python3 we7_4_module_enum.py -u http://127.0.0.1:8084
+```
+
+---
+
+## 8. Run every check
+
+```bash
+python3 run_all.py -u http://127.0.0.1:8084 -m xiaof_toupiao
+python3 run_all.py -u https://target -m some_module --json
+```
+
+---
+
+## 9. Safety of these scripts
+
+* GET requests only; no POST/PUT/DELETE, no multipart upload, no form submission;
+* no record is created, modified or deleted;
+* no e-mail or SMS is produced (WE7-6 uses an invalid recipient that is rejected pre-delivery);
+* no brute force, no payload list, no scanning of hosts or ports;
+* exactly one request per check (WE7-5 sends two per module/entry pair, that is the differential).
+
+Use them only on systems you own or are authorised to test.
+
+---
+
+## 10. Disclosure timeline
 
 | Date | Event |
 |---|---|
-| 2026-11-26 | Issues reproduced in a local lab on 1.7.2 / 1.7.7 / 2.9.13 |
-| 2026-11-26 | **Vendor notified** (support ticket + e-mail to the maintainer address listed on the project's repository) |
-| 2026-11-26 | **Public advisory published** (this repository) — issues were unfixed in 2.9.13 at publication time |
-| — | CVE request submitted to MITRE (CNA of last resort); ID not yet assigned |
-| — | Fix window remains open; this advisory will be updated when the vendor ships a fix |
+| 2026-11-26 | All six issues reproduced in a local lab (1.7.2 / 1.7.7 / 2.9.13) |
+| 2026-11-26 | **Vendor notified** (support ticket + e-mail to the maintainer address on the project's repository) |
+| 2026-11-26 | **Public advisory published** (this repository) — WE7-5 and WE7-6 were unfixed in 2.9.13 at publication time |
+| — | CVE requested from MITRE (CNA of last resort); ID not assigned yet |
+| — | This advisory will be updated when a fix ships |
 
-The vendor has been notified before publication. Because the issues are still unfixed in the current
-release and affect live installations, the technical description is published so that site operators
-can assess their exposure and apply the remediation described in sections 2.4 and 3.4 — in practice,
-restricting access to `/web/index.php?c=site&a=entry` and to `c=utility&a=verifycode` at the reverse
-proxy is an effective interim mitigation.
+### Interim mitigation for operators
 
-WeEngine has no CNA (it is not covered by Patchstack, Wordfence/WPScan or any product CNA), which is
-why the request goes to the CNA of last resort.
+Until a fix is available, block at the reverse proxy (both issues are reachable through these paths):
+
+```
+/web/index.php?c=site&a=entry     # WE7-5
+/web/index.php?c=utility&a=verifycode   # WE7-6
+```
+
+or restrict them to authenticated administrative source addresses.
+
+WeEngine has no CNA (it is not covered by Patchstack, Wordfence/WPScan or a product CNA), which is why
+the request goes to the CNA of last resort.
 
 ---
 
-## 6. Usage policy
+## 11. References
 
-Use this code only against systems you own or are explicitly authorised to test. The detector issues
-plain GET requests that render administrative pages; on a production site that may still be logged,
-rate-limited or treated as hostile traffic. The authors accept no liability for misuse.
-
-## 7. References
-
-* Vendor: <https://www.we7.cc> · <https://s.w7.cc>
-* Product documentation: <https://dev.w7.cc>
-* CWE-862 Missing Authorization · CWE-306 Missing Authentication for Critical Function
-* CWE-799 Improper Control of Interaction Frequency
+* Vendor: <https://www.we7.cc> · marketplace: <https://s.w7.cc> · developer docs: <https://dev.w7.cc>
+* CWE-862 / CWE-306 / CWE-434 / CWE-918 / CWE-200 / CWE-799 / CWE-770
+* MITRE CNA of Last Resort: <https://cveform.mitre.org>
