@@ -1,6 +1,7 @@
 # WeEngine (微擎) — Unauthenticated module entry access & verification-code trigger
 
-**Status:** vendor notification pending · **CVE:** not assigned yet
+**Status:** vendor notified 2026-11-26 · **CVE:** requested (not yet assigned)
+**Published:** 2026-11-26
 **Vendor:** WeEngine (微擎), 宿州市微擎云计算有限公司 — <https://www.we7.cc>
 **Tested against:** official release 2.9.13 (`IMS_RELEASE_DATE = 202610280001`, build 2026-10-28,
 package md5 `d14bcecbfb774d27f41c3c43796e2e05`), plus 1.7.2 and 1.7.7.
@@ -208,9 +209,16 @@ vulnerable entries: xiaof_toupiao?do=diagnose, xiaof_toupiao?do=excletop, xiaof_
 | Date | Event |
 |---|---|
 | 2026-11-26 | Issues reproduced in a local lab on 1.7.2 / 1.7.7 / 2.9.13 |
-| _pending_ | Vendor notification (ticket + e-mail) |
-| _pending_ | Requested fix window: 90 days from notification |
-| _pending_ | Public advisory + CVE request via MITRE (CNA of last resort) |
+| 2026-11-26 | **Vendor notified** (support ticket + e-mail to the maintainer address listed on the project's repository) |
+| 2026-11-26 | **Public advisory published** (this repository) — issues were unfixed in 2.9.13 at publication time |
+| — | CVE request submitted to MITRE (CNA of last resort); ID not yet assigned |
+| — | Fix window remains open; this advisory will be updated when the vendor ships a fix |
+
+The vendor has been notified before publication. Because the issues are still unfixed in the current
+release and affect live installations, the technical description is published so that site operators
+can assess their exposure and apply the remediation described in sections 2.4 and 3.4 — in practice,
+restricting access to `/web/index.php?c=site&a=entry` and to `c=utility&a=verifycode` at the reverse
+proxy is an effective interim mitigation.
 
 WeEngine has no CNA (it is not covered by Patchstack, Wordfence/WPScan or any product CNA), which is
 why the request goes to the CNA of last resort.
