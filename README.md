@@ -36,7 +36,7 @@ Each script is standalone (Python 3, standard library only), prints a verdict an
 | WE7-2 `wxcode` self-fetch echo | page echoed | page echoed | empty body |
 | WE7-3 `file` upload endpoint (no file sent) | JSON error | JSON error | `302` login |
 | WE7-4 `modules` list | module JSON | module JSON | module JSON |
-| WE7-5 entry with `direct=1` | `200` page | `302` when a binding row exists, `200` when not | `200` page |
+| WE7-5 entry with `direct=1` | `200` page (module had **no** binding rows) | `302` login (that module **has** 7 binding rows — the gate worked) | `200` page for undeclared entries, `302` for declared ones |
 | WE7-6 `verifycode` with malformed receiver | error text | error text | JSON error |
 
 `run_all.py` output on the two extremes:
