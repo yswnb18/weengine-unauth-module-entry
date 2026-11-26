@@ -1,7 +1,4 @@
-# WeEngine (微擎) — unauthenticated access issues, by vulnerability
-
-**Status:** vendor notified 2026-11-26 · **Published:** 2026-11-26 · **CVE:** requested (not yet assigned)
-**Vendor:** WeEngine (微擎), 宿州市微擎云计算有限公司 — <https://www.we7.cc>
+# WeEngine (微擎) — unauthenticated access issues, by vulnerabilit
 **Tested against:** official 2.9.13 (`IMS_RELEASE_DATE = 202610280001`, build 2026-10-28, package md5
 `d14bcecbfb774d27f41c3c43796e2e05`), plus 1.7.2 and 1.7.7.
 
