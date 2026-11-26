@@ -43,6 +43,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -69,8 +70,18 @@ def check(base, timeout=15):
     out = {"target": base, "check": "WE7-1 cloud dock unauthenticated download handler",
            "url": url, "status": status, "bytes": len(body), "sample": text[:80]}
 
-    # 1.7.x: exit("failed$post " . site_token)
-    legacy = text.startswith("failed") and len(text) > len("failed")
+    # 1.7.x: exit("failed" . $post . " " . site_token)
+    #   "failed" + optional echo of the POST body + " " + a 16..64 char token
+    # hardened 2.9.13: exit('failed') with no token at all
+    # unregistered site (any version): cloud guard message
+    # A non-WeEngine server that happens to answer "failed ..." must NOT match, so
+    # the tail has to be a single token-shaped word and the body has to be tiny
+    # plain text (no markup at all).
+    tail = text[len("failed"):].strip() if text.startswith("failed") else ""
+    last_word = tail.split()[-1] if tail.split() else ""
+    token_like = bool(re.fullmatch(r"[A-Za-z0-9_\-\.]{16,64}", last_word))
+    legacy = (status == 200 and text.startswith("failed") and token_like
+              and "<" not in text and len(body) < 120)
     if legacy:
         leaked = text[len("failed"):].strip()
         out["verdict"] = "VULNERABLE (legacy handler answers unauthenticated and echoes the site token)"

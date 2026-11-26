@@ -91,11 +91,36 @@ def http_get(url, timeout=15):
         return None, {}, str(e).encode()
 
 
-def looks_like_login(status, body):
+def gate_fired(status, headers, body):
+    """Did the framework stop us?
+    WeEngine's checklogin() either redirects (302 -> c=user&a=login, or simply the
+    site root) or renders a password form. Any 3xx / tiny body / password form
+    counts as 'the gate fired'; the location is not relied upon because it differs
+    between versions (1.7.x -> c=user&a=login, 2.x -> the site root)."""
     if status in (301, 302, 303, 307):
         return True
-    low = body[:4000].lower()
-    return b"name=\"password\"" in low or (b"login" in low and b"captcha" in low)
+    low = body[:6000].lower()
+    if b'type="password"' in low or b'name="password"' in low:
+        return True
+    return len(body) < 200
+
+
+WE7_MARKERS = ("微擎", "we7.cc", "w7.cc", "c=site", "web/index.php?c=")
+DENY_PHRASES = ("没有权限", "无权", "非法访问", "您没有权限", "permission denied",
+                "not authorized", "unauthorized", "access denied", "forbidden")
+
+
+def is_we7_page(body):
+    """The rendered page must carry WeEngine-specific markers; a generic HTML
+    page from some other application must not pass for a module admin page."""
+    text = body.decode("utf-8", "replace")
+    return any(m in text for m in WE7_MARKERS)
+
+
+def is_deny_page(body):
+    """A 200 'you are not allowed' page is still a denial, not a bypass."""
+    text = body.decode("utf-8", "replace")
+    return any(p in text for p in DENY_PHRASES)
 
 
 def entry_url(base, module, do, direct, extra=None):
@@ -108,14 +133,26 @@ def entry_url(base, module, do, direct, extra=None):
 def probe_pair(base, module, do, timeout=15):
     s0, h0, b0 = http_get(entry_url(base, module, do, 0), timeout)
     s1, h1, b1 = http_get(entry_url(base, module, do, 1), timeout)
-    blocked = looks_like_login(s0, b0)
-    reached = (s1 == 200 and len(b1) > 200 and not looks_like_login(s1, b1))
-    if blocked and reached:
+    gated = gate_fired(s0, h0, b0)          # the framework stopped us without direct
+    still_gated = gate_fired(s1, h1, b1)    # ... and also stopped us with direct
+    # VULNERABLE only if the gate fired without `direct` and a real WeEngine page
+    # came back with `direct`. A non-HTML body (e.g. a CSV export with
+    # Content-Disposition) also proves the method ran, since a login wall never
+    # returns a data file.
+    ct = (h1.get("Content-Type") or "").lower()
+    has_markup = b"<" in b1[:2000]
+    # A non-HTML body (CSV/JSON/binary download, or plain text without markup)
+    # proves the method actually ran: a login wall never returns data.
+    is_data_response = ((bool(ct) and "text/html" not in ct) or not has_markup) and len(b1) > 100
+    reached = (s1 == 200 and len(b1) > 100 and not still_gated
+               and not is_deny_page(b1)
+               and (is_we7_page(b1) or is_data_response))
+    if gated and reached:
         verdict = "VULNERABLE (direct=1 bypassed the login gate)"
-    elif s1 in (301, 302, 303, 307):
+    elif still_gated:
         verdict = "protected (a binding row exists -> checklogin() is enforced)"
-    elif s1 == 200 and not blocked:
-        verdict = "inconclusive (no gate observed even with direct=0)"
+    elif s1 == 200 and not gated:
+        verdict = "inconclusive (no gate seen even with direct=0 - not a WeEngine admin surface?)"
     else:
         verdict = "inconclusive"
     return {"module": module, "do": do,

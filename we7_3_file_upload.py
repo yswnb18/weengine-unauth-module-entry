@@ -69,8 +69,16 @@ def http_get(url, timeout=15):
 def check(base, timeout=15):
     url = f"{base.rstrip('/')}/web/index.php?c=utility&a=file&do=upload"
     status, body = http_get(url, timeout)
-    text = body.decode("utf-8", "replace")
-    exposed = status == 200 and ('"error"' in text or "上传失败" in text or '"message"' in text)
+    text = body.decode("utf-8", "replace").strip()
+    # WeEngine answers this handler with {"error":<int>,"message":"..."} — requiring
+    # BOTH keys and a JSON object keeps generic "200 + some JSON" from matching.
+    exposed = False
+    if status == 200 and text.startswith("{") and "<" not in text:
+        try:
+            data = json.loads(text)
+            exposed = isinstance(data, dict) and "error" in data and "message" in data
+        except Exception:
+            exposed = False
     if exposed:
         verdict = "EXPOSED (upload handler answers without a session; nothing was uploaded)"
     elif status in (301, 302, 303, 307):

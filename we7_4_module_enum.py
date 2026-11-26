@@ -54,12 +54,20 @@ def check(base, timeout=15):
     status, body = http_get(url, timeout)
     text = body.decode("utf-8", "replace")
     items = []
+    structured = False
     try:
         data = json.loads(text)
-        items = list(((data.get("message") or {}).get("message") or {}).get("items") or {})
+        # WeEngine wraps its ajax replies twice: message -> message -> items
+        inner = (data.get("message") or {})
+        inner2 = (inner.get("message") or {}) if isinstance(inner, dict) else {}
+        items_dict = inner2.get("items") if isinstance(inner2, dict) else None
+        if isinstance(items_dict, dict):
+            items = list(items_dict)
+            structured = True
     except Exception:
         pass
-    exposed = status == 200 and '"items"' in text
+    # require the real envelope structure, not just the word "items" in a page
+    exposed = status == 200 and structured
     return {"target": base, "check": "WE7-4 unauthenticated module enumeration", "url": url,
             "status": status, "bytes": len(body), "modules": items,
             "verdict": ("EXPOSED (installed module list returned without a session)" if exposed

@@ -36,7 +36,7 @@ Each script is standalone (Python 3, standard library only), prints a verdict an
 | WE7-5 entry with `direct=1` | `200` page (module had **no** binding rows) | `302` login (that module **has** 7 binding rows — the gate worked) | `200` page for undeclared entries, `302` for declared ones |
 | WE7-6 `verifycode` with malformed receiver | error text | error text | JSON error |
 
-`run_all.py` output on the two extremes:
+`run_all.py` output on the three extremes:
 
 ```
 target: http://127.0.0.1:8082            # 1.7.2
@@ -54,7 +54,59 @@ WE7-3  ... not exposed (redirects to the login page)
 WE7-4  ... EXPOSED
 WE7-6  ... REACHABLE WITHOUT A SESSION
 WE7-5  ... VULNERABLE
+
+target: http://127.0.0.1:8099            # NOT WeEngine - adversarial false-positive target
+WE7-1  ... inconclusive
+WE7-2  ... not vulnerable
+WE7-3  ... inconclusive
+WE7-4  ... not exposed
+WE7-6  ... inconclusive
+WE7-5  ... no bypass observed
+vulnerable: none
 ```
+
+### 1.1 False-positive / false-negative testing
+
+A detector is worthless if it "finds" the bug on hosts that do not have it. An earlier revision of
+these scripts did exactly that: run against a non-WeEngine server that merely *looked* plausible
+(a body starting with `failed`, a large HTML page, any `200` with JSON, any redirect), five of the six
+checks reported VULNERABLE. That is why every check now requires a **WeEngine-specific structure**
+rather than a shape:
+
+| check | structural requirement (post-hardening) |
+|---|---|
+| WE7-1 | body starts with `failed`, is tiny plain text (<120 B, no `<`), and the tail is a single **token-shaped word** (16–64 chars `[A-Za-z0-9_\-.]`). A sentence such as `failed to fetch package from cloud mirror` no longer matches. |
+| WE7-2 | the fetch target is WeEngine's own module-list JSON, and the reply must **be that JSON envelope** (`{`…`"errno"`/`"items"`…) — a big HTML page cannot pass for an echo. |
+| WE7-3 | reply must be a JSON object carrying **both** `error` and `message` keys (WeEngine's upload-error convention), with no markup. |
+| WE7-4 | the reply must parse to the real envelope `message → message → items` (dict), not merely contain the word `items`. |
+| WE7-5 | gate must fire without `direct` (3xx / tiny body / password form) **and** the `direct=1` reply must carry WeEngine markers (`微擎`, `c=site`, …) or be a data response (non-HTML body >100 B), with deny pages (`没有权限`, `not authorized`, …) excluded. |
+| WE7-6 | reply must be WeEngine's ajax JSON envelope **or** the endpoint's own validation text (`邮箱或手机号`, `验证码`), no markup. Any `200` page is not enough. |
+
+`_fp_target.py` ships with this repository — it is **not** WeEngine, it deliberately answers the probe
+URLs with look-alike responses (a body starting with `failed`, a 5 KB HTML page, `200`+JSON,
+`direct=0` → `302` to `/news/`, `direct=1` → a big page). Run it and re-run the checks:
+
+```bash
+python3 _fp_target.py 8099 &
+python3 run_all.py -u http://127.0.0.1:8099 -m fakemodule    # expected: "vulnerable: none"
+```
+
+Results after hardening (all measured, not asserted):
+
+| target | WE7-1 | WE7-2 | WE7-3 | WE7-4 | WE7-5 | WE7-6 | false positives |
+|---|---|---|---|---|---|---|---|
+| 1.7.2 lab | VULN | VULN | EXPOSED | EXPOSED | VULN | REACHABLE | 0 (all six are real) |
+| 1.7.7 lab, module with 7 bindings | VULN | VULN | EXPOSED | EXPOSED | protected *(correct: undeclared entries only)* | REACHABLE | 0 |
+| 2.9.13 lab | not vuln | not vuln | not exposed | EXPOSED | VULN | REACHABLE | 0 |
+| `_fp_target.py` (not WeEngine) | inconclusive | not vuln | inconclusive | not exposed | no bypass | inconclusive | **0** |
+
+Two honest limitations remain:
+
+* a check that answers **inconclusive** on a non-WeEngine host is by design — it means "the reply does
+  not look like WeEngine", not "safe";
+* WE7-5 can only test entries you name (`-m module -d do`); the framework does not expose a list of
+  third-party entries to an anonymous caller, so a "clean" result means "none of the entries you
+  named were exposed", not "the site is safe".
 
 ---
 

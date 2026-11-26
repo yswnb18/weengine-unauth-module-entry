@@ -79,7 +79,14 @@ def check(base, timeout=15):
            f"&do=send_code&receiver={MALFORMED}")
     status, body = http_get(url, timeout)
     text = body.decode("utf-8", "replace")
-    if status == 200 and text.strip():
+    low = text.lower()
+    # Must be WeEngine's own reply: either the double-wrapped ajax JSON envelope
+    # or the endpoint's plain-text validation message. A generic 200 page (WAF
+    # block page, other CMS) must not count.
+    is_we7_json = text.strip().startswith("{") and ('"errno"' in text or '"message"' in text)
+    is_we7_text = ("邮箱或手机号" in text) or ("验证码" in text) or ("verifycode" in low)
+    reached = status == 200 and (is_we7_json or is_we7_text) and "<html" not in low
+    if reached:
         verdict = ("REACHABLE WITHOUT A SESSION (a malformed receiver was rejected before delivery; "
                    "nothing was sent)")
     elif status in (301, 302, 303, 307):
