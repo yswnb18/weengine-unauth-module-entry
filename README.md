@@ -392,9 +392,6 @@ Use them only on systems you own or are authorised to test.
 | Date | Event |
 |---|---|
 | 2026-11-26 | All six issues reproduced in a local lab (1.7.2 / 1.7.7 / 2.9.13) |
-| 2026-11-26 | **Vendor notified** (support ticket + e-mail to the maintainer address on the project's repository) |
-| 2026-11-26 | **Public advisory published** (this repository) — WE7-5 and WE7-6 were unfixed in 2.9.13 at publication time |
-| — | CVE requested from MITRE (CNA of last resort); ID not assigned yet |
 | — | This advisory will be updated when a fix ships |
 
 ### Interim mitigation for operators
